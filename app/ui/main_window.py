@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import Account, Transaction
 from app.ledger import create_transaction
-
+from app.ui.bulk_entry_window import BulkEntryWindow
 
 
 class MainWindow(ttk.Frame):
@@ -64,6 +64,11 @@ class MainWindow(ttk.Frame):
         )
 
         ttk.Button(top, text="Refresh", command=self.refresh_all).grid(row=0, column=2, rowspan=2, padx=(10, 0))
+        ttk.Button(
+            top,
+            text="Bulk entry",
+            command=lambda: BulkEntryWindow(self.master),
+        ).grid(row=0, column=3, rowspan=2, padx=(10, 0))
 
         # Bottom: transactions list
         bottom = ttk.LabelFrame(self, text="Recent transactions", padding=10)
