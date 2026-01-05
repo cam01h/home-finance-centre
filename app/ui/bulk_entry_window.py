@@ -62,7 +62,7 @@ class BulkEntryWindow(tk.Toplevel):
         self.tree.column("status", width=90, anchor="w")
 
         # Dummy row so you can see it’s alive (we’ll remove this later)
-        self.tree.insert("", "end", values=("2026-01-04", "TESCO", "Groceries", "-12.34", "Current Account", "", "Draft"))
+        self.tree.insert("", "end", values=("01/04/2026", "TESCO", "Groceries", "-12.34", "Current Account", "", "Draft"))
         self.tree.bind("<Double-1>", self._begin_edit)
         self._edit_entry = None
         self._edit_item = None
@@ -191,9 +191,9 @@ class BulkEntryWindow(tk.Toplevel):
         # Date format (simple)
         if date_s.strip():
             try:
-                datetime.strptime(date_s.strip(), "%Y-%m-%d")
+                datetime.strptime(date_s.strip(), "%d/%m/%Y")
             except ValueError:
-                errors.append("date format YYYY-MM-DD")
+                errors.append("date format DD/MM/YYYY")
 
         # Amount format (simple numeric check)
         if amount_s.strip():
@@ -245,8 +245,8 @@ class BulkEntryWindow(tk.Toplevel):
                     continue
 
                 try:
-                    # Parse date (YYYY-MM-DD)
-                    tx_date = datetime.strptime(date_s.strip(), "%Y-%m-%d")
+                    # Parse date (DD/MM/YYYY)
+                    tx_date = datetime.strptime(date_s.strip(), "%d/%m/%Y")
 
                     # Amount -> pennies (simple; we can harden later)
                     amt = float(amount_s.strip().replace("£", ""))

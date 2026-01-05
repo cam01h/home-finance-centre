@@ -117,7 +117,7 @@ class MainWindow(ttk.Frame):
             ).scalars().all()
 
         for tx in txs:
-            ts = tx.timestamp.strftime("%Y-%m-%d %H:%M")
+            ts = tx.timestamp.strftime("%d-%m-%Y")
             self.tree.insert("", "end", values=(tx.id, ts, tx.description))
     
     def _save_transaction(self) -> None:
