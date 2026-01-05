@@ -4,6 +4,7 @@ from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from app.db import SessionLocal
 from app.models import Account
 from app.ledger import create_transaction
@@ -16,6 +17,7 @@ class BulkEntryWindow(tk.Toplevel):
     Staging / bulk transaction entry window.
     This step is just the shell + table columns (no saving yet).
     """
+    ADD_CATEGORY_LABEL = "+ Add new category…"
 
     def __init__(self, master: tk.Tk):
         super().__init__(master)
@@ -112,16 +114,19 @@ class BulkEntryWindow(tk.Toplevel):
         self._edit_col = col_index
 
         is_account_col = col_index in (4, 5)  # primary, balancing
+        is_balancing_col = col_index == 5
 
         if is_account_col:
             self._edit_entry = ttk.Combobox(
                 self.tree,
-                values=self.account_names,
+                values=(self.account_names + ([self.ADD_CATEGORY_LABEL] if is_balancing_col else [])),
                 state="readonly",
             )
             # set current if it matches
-            if current in self.account_names:
+            if current:
                 self._edit_entry.set(current)
+            else:
+                self._edit_entry.set("")
         else:
             self._edit_entry = tk.Entry(self.tree)
             self._edit_entry.insert(0, current)
@@ -164,6 +169,34 @@ class BulkEntryWindow(tk.Toplevel):
             return
 
         new_value = self._edit_entry.get()
+
+        # If user chose "Add new category…" in balancing column, create it and use it
+        if self._edit_col == 5 and new_value == self.ADD_CATEGORY_LABEL:
+            name = simpledialog.askstring("New category", "Enter new category name:", parent=self)
+            if not name:
+                # user cancelled
+                self._edit_entry.destroy()
+                self._edit_entry = None
+                self._edit_item = None
+                self._edit_col = None
+                return
+
+            created = self._create_expense_account(name)
+            if not created:
+                messagebox.showerror("Account error", "That name already exists (or is invalid).")
+                # Keep editor open so they can choose something else
+                return
+
+            self._reload_accounts()
+
+            # Update combobox values and set to new name
+            try:
+                self._edit_entry["values"] = self.account_names + [self.ADD_CATEGORY_LABEL]
+                self._edit_entry.set(name.strip())
+                new_value = name.strip()
+            except Exception:
+                new_value = name.strip()
+
 
         values = list(self.tree.item(self._edit_item, "values"))
         # Ensure list is long enough
@@ -321,3 +354,24 @@ class BulkEntryWindow(tk.Toplevel):
             "Commit complete",
             f"Committed: {committed}\nSkipped: {skipped}\nErrors: {errors}",
         )
+
+    def _reload_accounts(self) -> None:
+        with SessionLocal() as session:
+            self.account_names = session.execute(
+                select(Account.name).order_by(Account.name)
+            ).scalars().all()
+
+    def _create_expense_account(self, name: str) -> bool:
+        name = name.strip()
+        if not name:
+            return False
+
+        try:
+            with SessionLocal() as session:
+                session.add(Account(name=name, type="expense"))
+                session.commit()
+            return True
+        except IntegrityError:
+            # Name already exists (unique constraint)
+            return False
+
