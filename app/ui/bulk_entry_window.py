@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import Account
