@@ -7,6 +7,8 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import Account
 from app.ledger import create_transaction
+from app.ui.import_window import ImportWindow
+
 
 
 class BulkEntryWindow(tk.Toplevel):
@@ -38,6 +40,8 @@ class BulkEntryWindow(tk.Toplevel):
 
         ttk.Button(actions, text="Add row", command=self._add_row).pack(side="left")
         ttk.Button(actions, text="Commit ready rows", command=self._commit_ready_rows).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Add file...", command=self._open_import_window).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Delete selected", command=self._delete_selected_rows).pack(side="left", padx=(8, 0))
         
         columns = ("date", "merchant", "description", "amount", "primary", "balancing", "status")
 
@@ -133,6 +137,27 @@ class BulkEntryWindow(tk.Toplevel):
         if is_account_col:
             self._edit_entry.bind("<<ComboboxSelected>>", self._commit_edit)
 
+    def _open_import_window(self) -> None:
+        ImportWindow(self, on_import_rows=self.add_imported_rows)
+
+    def add_imported_rows(self, rows: list[dict]) -> None:
+        """
+        Insert imported rows into the staging table and validate them.
+        Each row dict should have keys: date, merchant, description, amount, primary, balancing
+        """
+        for r in rows:
+            values = (
+                r.get("date", ""),
+                r.get("merchant", ""),
+                r.get("description", ""),
+                r.get("amount", ""),
+                r.get("primary", ""),
+                r.get("balancing", ""),
+                "Draft",
+            )
+            item_id = self.tree.insert("", "end", values=values)
+            self._validate_item(item_id)
+
 
     def _commit_edit(self, event=None) -> None:
         if self._edit_entry is None or self._edit_item is None or self._edit_col is None:
@@ -216,6 +241,13 @@ class BulkEntryWindow(tk.Toplevel):
     def _validate_all(self) -> None:
         for item in self.tree.get_children():
             self._validate_item(item)
+
+    def _delete_selected_rows(self) -> None:
+        selected = self.tree.selection()
+        if not selected:
+            return
+        for item_id in selected:
+            self.tree.delete(item_id)
 
     def _commit_ready_rows(self) -> None:
         """
