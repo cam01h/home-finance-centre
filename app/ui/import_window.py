@@ -147,7 +147,7 @@ class ImportWindow(tk.Toplevel):
         #=============================
         # Handle as PDF import
         #=============================
-        
+
         if path.lower().endswith(".pdf"):
             try:
                 rows = extract_transactions_from_pdf(path)
@@ -236,6 +236,11 @@ class ImportWindow(tk.Toplevel):
                     else:
                         v = row.get(col, "")
                         out[key] = "" if pd.isna(v) else str(v).strip()
+
+                # Skip balance rows (not real transactions)
+                text_blob = f"{out.get('merchant', '')} {out.get('description', '')}".upper()
+                if "BALANCE BROUGHT FORWARD" in text_blob or "BALANCE CARRIED FORWARD" in text_blob:
+                    continue
 
                 rows_out.append(out)
 

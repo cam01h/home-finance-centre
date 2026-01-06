@@ -59,37 +59,53 @@ def _iter_pdf_lines(pdf_path: Path) -> Iterable[str]:
                     yield line
 
 
+# Lines that look like the start of a new transaction *without* repeating the date.
+NO_DATE_START_RE = re.compile(r"^(CR|DD|VIS|TFR|BP)\b")
+
 def _split_into_blocks(lines: Iterable[str]) -> List[_TxBlock]:
-    # Split the lines into transaction blocks anchored by date lines.
+    """
+    Split into transaction blocks.
+
+    Rule A: A line starting with 'DD Mon YY' starts a new transaction (normal case).
+    Rule B: A line starting with CR/DD/VIS/TFR/BP (etc) ALSO starts a new transaction,
+
+    # remember to stab anyone who thinks PDFs are a net positive to society.
+
+    """
     blocks: List[_TxBlock] = []
     current: Optional[_TxBlock] = None
+    last_date_display: Optional[str] = None
 
     for line in lines:
-        m = DATE_LINE_RE.match(line)
-        if m:
-            # Starting a new transaction block -> save old one if present
+        m_date = DATE_LINE_RE.match(line)
+        if m_date:
+            # close current block
             if current is not None:
                 blocks.append(current)
 
-            date_display = _format_date_ddmmyyyy(m.group("day"), m.group("mon"), m.group("yy"))
+            last_date_display = _format_date_ddmmyyyy(
+                m_date.group("day"), m_date.group("mon"), m_date.group("yy")
+            )
+            current = _TxBlock(date_display=last_date_display, raw_lines=[line])
+            continue
 
-            # Start a fresh block. We store the FULL line (not just 'rest')
-            # because the same line may contain CR/DD/VIS and sometimes amounts.
-            current = _TxBlock(date_display=date_display, raw_lines=[line])
-        else:
-            # Not a date-line: it is a continuation of the current transaction
+        # If we have a date already, and the line looks like a new transaction starter
+        # start a new block with inherited date.
+        if last_date_display and NO_DATE_START_RE.match(line):
             if current is not None:
-                current.raw_lines.append(line)
-            else:
-                # We are in header/footer noise before the first transaction.
-                # Ignore it.
-                continue
+                blocks.append(current)
+            current = _TxBlock(date_display=last_date_display, raw_lines=[line])
+            continue
 
-    # Append last open block
+        # Otherwise, it's a continuation line (or header noise before first tx)
+        if current is not None:
+            current.raw_lines.append(line)
+
     if current is not None:
         blocks.append(current)
 
     return blocks
+
 
 
 def _clean_amount_token(token: str) -> str:
@@ -109,15 +125,20 @@ def _extract_amount_and_balance(block_text: str) -> tuple[Optional[str], Optiona
 
 
 def _is_credit(block_text: str) -> bool:
-    # Pull the first line (it contains the date + the first details token)
     first_line = block_text.splitlines()[0] if block_text else ""
+
+    # If statement omitted the date on same-day lines, credits still start with "CR "
+    if first_line.startswith("CR "):
+        return True
+
+    # Otherwise, try the dated format: "DD Mon YY CR ..."
     m = DATE_LINE_RE.match(first_line)
     if not m:
         return False
 
     rest = m.group("rest").strip()
-    # my bank uses "CR" prefix to indicate credit transactions
     return rest.startswith("CR ")
+
 
 
 def _build_staging_row(block: _TxBlock) -> dict:
