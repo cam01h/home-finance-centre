@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
+from app.importers.statement_pdf import extract_transactions_from_pdf
 
 
 IGNORE = "(ignore)"
