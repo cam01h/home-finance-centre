@@ -144,14 +144,24 @@ class ImportWindow(tk.Toplevel):
         self._clear_log()
         self._log(f"Selected file: {path}")
 
+        #=============================
+        # Handle as PDF import
+        #=============================
+        
         if path.lower().endswith(".pdf"):
             try:
                 rows = extract_transactions_from_pdf(path)
-                self._log(f"PDF detected: extracted {len(rows)} transactions (placeholder)")
-                messagebox.showinfo(
-                    "PDF import",
-                    f"PDF selected.\nExtracted {len(rows)} transactions (not yet mapped).",
-                )
+
+                if not rows:
+                    messagebox.showinfo("Nothing imported", "No transactions found in the PDF.")
+                    return
+
+                # Send rows to BulkEntryWindow (same callback used by CSV)
+                self.on_import_rows(rows)
+
+                messagebox.showinfo("Imported", f"Imported {len(rows)} rows into staging (PDF).")
+                self.destroy()
+
             except Exception as e:
                 messagebox.showerror("PDF import error", str(e))
             return
