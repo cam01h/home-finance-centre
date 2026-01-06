@@ -144,9 +144,16 @@ class ImportWindow(tk.Toplevel):
         self._clear_log()
         self._log(f"Selected file: {path}")
 
-        if not path.lower().endswith(".csv"):
-            self.import_btn.configure(state="disabled")
-            messagebox.showinfo("Not supported yet", "Only CSV files are supported right now.")
+        if path.lower().endswith(".pdf"):
+            try:
+                rows = extract_transactions_from_pdf(path)
+                self._log(f"PDF detected: extracted {len(rows)} transactions (placeholder)")
+                messagebox.showinfo(
+                    "PDF import",
+                    f"PDF selected.\nExtracted {len(rows)} transactions (not yet mapped).",
+                )
+            except Exception as e:
+                messagebox.showerror("PDF import error", str(e))
             return
 
         try:
