@@ -59,24 +59,28 @@ def _iter_pdf_lines(pdf_path: Path) -> Iterable[str]:
                     yield line
 
 
-# Lines that look like the start of a new transaction *without* repeating the date.
-NO_DATE_START_RE = re.compile(r"^(CR|DD|VIS|TFR|BP)\b")
+# Allow leading whitespace + the common starters.
+# This catches cases where pdf text extraction inserts odd spacing.
+NO_DATE_START_RE = re.compile(r"^\s*(CR|DD|VIS|TFR|BP)\b")
+
 
 def _split_into_blocks(lines: Iterable[str]) -> List[_TxBlock]:
     """
-    Split into transaction blocks.
-
-    Rule A: A line starting with 'DD Mon YY' starts a new transaction (normal case).
-    Rule B: A line starting with CR/DD/VIS/TFR/BP (etc) ALSO starts a new transaction,
-
-    # remember to stab anyone who thinks PDFs are a net positive to society.
-
+    remember that the intentional furtherance of PDFs in world is
+    a heinous crime against humanity and your children will judge you
     """
     blocks: List[_TxBlock] = []
     current: Optional[_TxBlock] = None
     last_date_display: Optional[str] = None
 
     for line in lines:
+        normline = re.sub(r"[^A-Z]", "", line.upper())
+        if normline.startswith("BALANCECARRIEDFORWARD") or normline.startswith("BALANCEBROUGHTFORWARD"):
+            if current is not None:
+                blocks.append(current)
+                current = None
+            continue
+
         m_date = DATE_LINE_RE.match(line)
         if m_date:
             # close current block
@@ -106,6 +110,13 @@ def _split_into_blocks(lines: Iterable[str]) -> List[_TxBlock]:
 
     return blocks
 
+def _strip_trailing_money(text: str, n: int = 2) -> str:
+    # Remove the last `n` money tokens from the END of the string.
+    # Works whether the token has commas or not.
+    out = text.strip()
+    for _ in range(n):
+        out = re.sub(rf"\s{MONEY_RE.pattern}\s*$", "", out).strip()
+    return out
 
 
 def _clean_amount_token(token: str) -> str:
@@ -114,14 +125,21 @@ def _clean_amount_token(token: str) -> str:
 
 
 def _extract_amount_and_balance(block_text: str) -> tuple[Optional[str], Optional[str]]:
-    # Extract the last two money tokens from the block text: amount and balance.
+    # Extract money tokens from the block text.
     nums = [m.group("num") for m in MONEY_RE.finditer(block_text)]
-    if len(nums) < 2:
+    if not nums:
         return None, None
 
+    if len(nums) == 1:
+        # Some HSBC lines extract only the amount (balance column missing in text layer)
+        amount = _clean_amount_token(nums[-1])
+        return amount, None
+
+    # Usual case: ... amount balance
     amount = _clean_amount_token(nums[-2])
     balance = _clean_amount_token(nums[-1])
     return amount, balance
+
 
 
 def _is_credit(block_text: str) -> bool:
@@ -158,10 +176,8 @@ def _build_staging_row(block: _TxBlock) -> dict:
 
     desc = block_text_flat
 
-    # Remove the last two money tokens (amount & balance) if present to clean up description.
-    if amount and balance:
-        for tok in (balance, amount):
-            desc = re.sub(rf"\s{re.escape(tok)}\s*$", "", desc).strip()
+    # Remove trailing amount/balance safely (handles commas properly)
+    desc = _strip_trailing_money(desc, n=2)
 
     # Optionally, you can also strip the date prefix from description.
     m = DATE_LINE_RE.match(block.raw_lines[0])
@@ -170,11 +186,14 @@ def _build_staging_row(block: _TxBlock) -> dict:
         continuation = block.raw_lines[1:]
         desc = " ".join([first_rest] + continuation).strip()
 
-        # And remove trailing amount/balance tokens again (since we rebuilt)
-        if amount and balance:
-            # remove last token balance then amount (if they are at the very end)
-            desc = re.sub(rf"\s{re.escape(balance)}\s*$", "", desc).strip()
-            desc = re.sub(rf"\s{re.escape(amount)}\s*$", "", desc).strip()
+        desc = _strip_trailing_money(desc, n=2)
+
+    # Drop statement boilerplate that sometimes looks like a transaction.
+    # PDF text extraction sometimes removes spaces (e.g. BALANCECARRIEDFORWARD),
+    # so we normalise to letters-only before checking.
+    norm = re.sub(r"[^A-Z]", "", desc.upper())
+    if norm.startswith("BALANCEBROUGHTFORWARD") or norm.startswith("BALANCECARRIEDFORWARD"):
+        return {}
 
     merchant = ""
 
@@ -212,7 +231,7 @@ def extract_transactions_from_pdf(pdf_path: str | Path) -> List[dict]:
         # If we couldn't find an amount, it's probably not a transaction
         # (or it's a weird header line that accidentally looked like a date).
         # We keep only rows with a date AND a non-empty amount.
-        if row["date"] and row["amount"]:
+        if row and row.get("date") and row.get("amount"):
             rows.append(row)
 
     return rows
