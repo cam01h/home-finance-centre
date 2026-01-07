@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
+from app.importers.statement_pdf import extract_transactions_from_pdf
 
 
 IGNORE = "(ignore)"
@@ -143,9 +144,26 @@ class ImportWindow(tk.Toplevel):
         self._clear_log()
         self._log(f"Selected file: {path}")
 
-        if not path.lower().endswith(".csv"):
-            self.import_btn.configure(state="disabled")
-            messagebox.showinfo("Not supported yet", "Only CSV files are supported right now.")
+        #=============================
+        # Handle as PDF import
+        #=============================
+
+        if path.lower().endswith(".pdf"):
+            try:
+                rows = extract_transactions_from_pdf(path)
+
+                if not rows:
+                    messagebox.showinfo("Nothing imported", "No transactions found in the PDF.")
+                    return
+
+                # Send rows to BulkEntryWindow (same callback used by CSV)
+                self.on_import_rows(rows)
+
+                messagebox.showinfo("Imported", f"Imported {len(rows)} rows into staging (PDF).")
+                self.destroy()
+
+            except Exception as e:
+                messagebox.showerror("PDF import error", str(e))
             return
 
         try:
@@ -218,6 +236,11 @@ class ImportWindow(tk.Toplevel):
                     else:
                         v = row.get(col, "")
                         out[key] = "" if pd.isna(v) else str(v).strip()
+
+                # Skip balance rows (not real transactions)
+                text_blob = f"{out.get('merchant', '')} {out.get('description', '')}".upper()
+                if "BALANCE BROUGHT FORWARD" in text_blob or "BALANCE CARRIED FORWARD" in text_blob:
+                    continue
 
                 rows_out.append(out)
 
