@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 from app.importers.statement_pdf import extract_transactions_from_pdf
+from app.importers.statement_csv import extract_transactions_from_csv
 
 
 IGNORE = "(ignore)"
@@ -197,60 +198,17 @@ class ImportWindow(tk.Toplevel):
             messagebox.showerror("Mapping error", "Date and Amount must be mapped (required).")
             return
 
-        # Read full CSV (MVP)
         try:
-            df = pd.read_csv(self.selected_path)
-
-            rows_out = []
-            for _, row in df.iterrows():
-                out = {}
-
-                # Date: parse day-first; format DD/MM/YYYY
-                raw_date = row.get(mapping["date"], "")
-                dt = pd.to_datetime(raw_date, dayfirst=True, errors="coerce")
-                if pd.isna(dt):
-                    out["date"] = ""
-                else:
-                    out["date"] = dt.strftime("%d/%m/%Y")
-
-                # Amount: keep as string; strip currency and commas
-                raw_amt = row.get(mapping["amount"], "")
-                amt_s = "" if pd.isna(raw_amt) else str(raw_amt)
-                amt_s = amt_s.replace("£", "").replace(",", "").strip()
-                out["amount"] = amt_s
-
-                # Optional text fields
-                for key in ("merchant", "description"):
-                    col = mapping[key]
-                    if col == IGNORE:
-                        out[key] = ""
-                    else:
-                        v = row.get(col, "")
-                        out[key] = "" if pd.isna(v) else str(v).strip()
-
-                # Optional account fields (we’ll mostly leave blank in MVP)
-                for key in ("primary", "balancing"):
-                    col = mapping[key]
-                    if col == IGNORE:
-                        out[key] = ""
-                    else:
-                        v = row.get(col, "")
-                        out[key] = "" if pd.isna(v) else str(v).strip()
-
-                # Skip balance rows (not real transactions)
-                text_blob = f"{out.get('merchant', '')} {out.get('description', '')}".upper()
-                if "BALANCE BROUGHT FORWARD" in text_blob or "BALANCE CARRIED FORWARD" in text_blob:
-                    continue
-
-                rows_out.append(out)
+            rows_out = extract_transactions_from_csv(
+                csv_path=self.selected_path,
+                mapping=mapping,
+            )
 
             if not rows_out:
                 messagebox.showinfo("Nothing imported", "No rows found in the CSV.")
                 return
 
-            # Send rows to BulkEntryWindow
             self.on_import_rows(rows_out)
-
             messagebox.showinfo("Imported", f"Imported {len(rows_out)} rows into staging.")
             self.destroy()
 
