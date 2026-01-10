@@ -66,7 +66,7 @@ NO_DATE_START_RE = re.compile(r"^\s*(CR|DD|VIS|TFR|BP)\b")
 
 def _split_into_blocks(lines: Iterable[str]) -> List[_TxBlock]:
     """
-    remember that the intentional furtherance of PDFs in world is
+    remember that the intentional furtherance of PDFs in the world is
     a heinous crime against humanity and your children will judge you
     """
     blocks: List[_TxBlock] = []
