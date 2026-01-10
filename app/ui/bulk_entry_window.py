@@ -9,6 +9,8 @@ from app.db import SessionLocal
 from app.models import Account
 from app.ledger import create_transaction
 from app.ui.import_window import ImportWindow
+from app.accounts import get_primary_accounts, get_balancing_accounts, add_balancing_account
+
 
 
 
@@ -28,9 +30,9 @@ class BulkEntryWindow(tk.Toplevel):
         container.pack(fill="both", expand=True)
 
         with SessionLocal() as session:
-            self.account_names = session.execute(
-                select(Account.name).order_by(Account.name)
-            ).scalars().all()
+            self.primary_account_names = [a.name for a in get_primary_accounts(session)]
+            self.balancing_account_names = [a.name for a in get_balancing_accounts(session)]
+
 
         ttk.Label(
             container,
@@ -117,9 +119,14 @@ class BulkEntryWindow(tk.Toplevel):
         is_balancing_col = col_index == 5
 
         if is_account_col:
+            if is_balancing_col:
+                choices = self.balancing_account_names + [self.ADD_CATEGORY_LABEL]
+            else:
+                choices = self.primary_account_names
+
             self._edit_entry = ttk.Combobox(
                 self.tree,
-                values=(self.account_names + ([self.ADD_CATEGORY_LABEL] if is_balancing_col else [])),
+                values=choices,
                 state="readonly",
             )
             # set current if it matches
@@ -181,22 +188,28 @@ class BulkEntryWindow(tk.Toplevel):
                 self._edit_col = None
                 return
 
-            created = self._create_expense_account(name)
-            if not created:
-                messagebox.showerror("Account error", "That name already exists (or is invalid).")
-                # Keep editor open so they can choose something else
-                return
+            name = name.strip()
 
-            self._reload_accounts()
+            with SessionLocal() as session:
+                try:
+                    add_balancing_account(session, name=name, account_type="expense")
+                except IntegrityError:
+                    messagebox.showerror(
+                        "Account error",
+                        f"'{name}' already exists. Please choose a different name.",
+                    )
+                    # Keep the editor open so they can pick something else
+                    return
 
-            # Update combobox values and set to new name
+                self.balancing_account_names = [a.name for a in get_balancing_accounts(session)]
+
+            # Update combobox values and select new category
             try:
-                self._edit_entry["values"] = self.account_names + [self.ADD_CATEGORY_LABEL]
-                self._edit_entry.set(name.strip())
-                new_value = name.strip()
+                self._edit_entry["values"] = self.balancing_account_names + [self.ADD_CATEGORY_LABEL]
+                self._edit_entry.set(name)
+                new_value = name
             except Exception:
-                new_value = name.strip()
-
+                new_value = name
 
         values = list(self.tree.item(self._edit_item, "values"))
         # Ensure list is long enough
@@ -354,24 +367,3 @@ class BulkEntryWindow(tk.Toplevel):
             "Commit complete",
             f"Committed: {committed}\nSkipped: {skipped}\nErrors: {errors}",
         )
-
-    def _reload_accounts(self) -> None:
-        with SessionLocal() as session:
-            self.account_names = session.execute(
-                select(Account.name).order_by(Account.name)
-            ).scalars().all()
-
-    def _create_expense_account(self, name: str) -> bool:
-        name = name.strip()
-        if not name:
-            return False
-
-        try:
-            with SessionLocal() as session:
-                session.add(Account(name=name, type="expense"))
-                session.commit()
-            return True
-        except IntegrityError:
-            # Name already exists (unique constraint)
-            return False
-
