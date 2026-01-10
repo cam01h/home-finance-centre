@@ -25,7 +25,7 @@ class Account(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "type IN ('asset','liability','income','expense','equity')",
+            "type IN ('asset','liability','income','expense','adjustment')",
             name="ck_accounts_type"
         ),
     )
