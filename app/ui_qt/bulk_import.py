@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import pandas as pd
+import re
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -204,6 +205,13 @@ class BulkImportPage(QFrame):
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         outer.addWidget(self.table, 1)
 
+    def _reset_import_state(self) -> None:
+        """Clear current loaded rows + preview and disable commit."""
+        self.rows = []
+        self.commit_btn.setEnabled(False)
+        self.table.setRowCount(0)
+
+
     def choose_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -214,6 +222,8 @@ class BulkImportPage(QFrame):
         if not path:
             return
 
+        # New file selection => clear any previous loaded rows/preview immediately
+        self._reset_import_state()
         self.file_label.setText(str(Path(path)))
 
         try:
@@ -222,24 +232,25 @@ class BulkImportPage(QFrame):
             columns = [str(c) for c in df_head.columns.tolist()]
         except Exception as e:
             QMessageBox.critical(self, "Import error", f"Failed to read CSV headers:\n{e}")
+            # keep state reset
             return
 
         dlg = CsvMappingDialog(self, columns)
         if dlg.exec() != QDialog.Accepted or not dlg.mapping:
+            # user cancelled mapping => keep state reset (prevents stale commit)
             return
 
         try:
             rows = extract_transactions_from_csv(path, dlg.mapping)
         except Exception as e:
             QMessageBox.critical(self, "Import error", f"Failed to parse CSV:\n{e}")
+            # keep state reset
             return
 
         self._load_preview(rows)
 
         self.rows = rows
         self.commit_btn.setEnabled(len(self.rows) > 0)
-
-
 
     def _load_preview(self, rows: list[dict]) -> None:
         self.table.setRowCount(min(len(rows), 500))  # cap preview
@@ -262,6 +273,7 @@ class BulkImportPage(QFrame):
         if not self.rows:
             QMessageBox.information(self, "Nothing to commit", "Load a CSV first.")
             return
+        
 
         dlg = ImportAccountsDialog(self)
         if dlg.exec() != QDialog.Accepted or not dlg.result:
@@ -309,6 +321,12 @@ class BulkImportPage(QFrame):
             msg += f"\n\nFirst skipped error:\n{first_error}"
         QMessageBox.information(self, "Import complete", msg)
 
+        # Prevent accidental double-commit duplicates
+        if ok > 0:
+            self._reset_import_state()
+            self.file_label.setText("Committed.")
+
+
 
     def _build_description(self, merchant: str, description: str) -> str:
         merchant = (merchant or "").strip()
@@ -322,26 +340,87 @@ class BulkImportPage(QFrame):
         s = (amount_raw or "").strip()
         if not s:
             return None
+
+        # Handle negatives like "(12.34)"
+        negative = False
+        if s.startswith("(") and s.endswith(")"):
+            negative = True
+            s = s[1:-1].strip()
+
+        # Remove currency symbols/letters and whitespace, keep digits and separators
+        # Example inputs handled:
+        # "£1,234.56"  -> "1,234.56"
+        # "USD 12.34"  -> "12.34"
+        # "  -12.34 "  -> "-12.34"
+        s = s.replace(" ", "")
+        s = re.sub(r"[^\d,.\-+]", "", s)
+
+        if not s:
+            return None
+
+        # If it includes both '.' and ',', guess which is decimal separator.
+        # - UK/US: "1,234.56" => ',' thousands, '.' decimal
+        # - EU:    "1.234,56" => '.' thousands, ',' decimal
+        if "," in s and "." in s:
+            if s.rfind(",") > s.rfind("."):
+                # assume EU format: remove thousands '.', swap decimal ',' -> '.'
+                s = s.replace(".", "")
+                s = s.replace(",", ".")
+            else:
+                # assume UK/US format: remove thousands ','
+                s = s.replace(",", "")
+        else:
+            # Only commas => could be thousands or decimal, but common for statements is thousands separators
+            # so we remove commas.
+            s = s.replace(",", "")
+
+        # Apply parentheses negative last (so "( -12.34 )" still works sensibly)
+        if negative and not s.startswith("-"):
+            s = "-" + s
+
         try:
             dec = Decimal(s)
-        except InvalidOperation:
+        except (InvalidOperation, ValueError):
             return None
-        return int((dec * 100).to_integral_value())
 
+        return int((dec * 100).to_integral_value())
 
     def _parse_date_to_timestamp(self, date_raw: str) -> datetime | None:
         s = (date_raw or "").strip()
         if not s:
             return None
 
-        # Extractor typically emits DD/MM/YYYY for staging.
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        # Common formats (date-only + date-time)
+        fmts = (
+            "%d/%m/%Y",
+            "%Y-%m-%d",
+            "%d-%m-%Y",
+            "%d/%m/%Y %H:%M",
+            "%d/%m/%Y %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+
+        for fmt in fmts:
             try:
-                d = datetime.strptime(s, fmt).date()
-                # Use midday to avoid DST weirdness; time-of-day isn't important for MVP
-                return datetime.combine(d, datetime.min.time()).replace(hour=12)
+                dt = datetime.strptime(s, fmt)
+                # If it was a date-only format, normalise to midday
+                if dt.hour == 0 and dt.minute == 0 and dt.second == 0 and len(s) <= 10:
+                    return dt.replace(hour=12)
+                return dt
             except ValueError:
                 continue
 
-        return None
+        # Last resort: try ISO parsing (handles "YYYY-MM-DDTHH:MM:SS.sss" etc)
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            # If timezone-aware, drop tzinfo to keep DB consistent (naive)
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            return dt
+        except Exception:
+            return None
+
 
