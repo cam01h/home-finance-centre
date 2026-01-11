@@ -10,6 +10,7 @@ from app.models import Account
 from app.ledger import create_transaction
 from app.ui.import_window import ImportWindow
 from app.accounts import get_primary_accounts, get_balancing_accounts, add_balancing_account
+from app.ui.manage_accounts_window import ManageAccountsWindow
 
 
 
@@ -46,6 +47,7 @@ class BulkEntryWindow(tk.Toplevel):
         ttk.Button(actions, text="Commit ready rows", command=self._commit_ready_rows).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Add file...", command=self._open_import_window).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Delete selected", command=self._delete_selected_rows).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Manage accounts…", command=self._open_manage_accounts).pack(side="left", padx=(8, 0))
         
         columns = ("date", "merchant", "description", "amount", "primary", "balancing", "status")
 
@@ -367,3 +369,6 @@ class BulkEntryWindow(tk.Toplevel):
             "Commit complete",
             f"Committed: {committed}\nSkipped: {skipped}\nErrors: {errors}",
         )
+
+    def _open_manage_accounts(self) -> None:
+        ManageAccountsWindow(self)
