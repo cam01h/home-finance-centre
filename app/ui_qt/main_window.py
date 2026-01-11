@@ -2,6 +2,7 @@
 from __future__ import annotations
 from app.ui_qt.transaction_entry import TransactionEntryPage
 from app.ui_qt.transaction_history import TransactionHistoryPage
+from app.ui_qt.accounts_manager import AccountsManagerPage
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
         self.page_entry = TransactionEntryPage()
         self.page_history = TransactionHistoryPage()
         self.page_import = self._make_placeholder_page("Bulk Import (CSV/PDF)")
-        self.page_accounts = self._make_placeholder_page("Accounts Manager")
+        self.page_accounts = AccountsManagerPage()
 
         self.pages.addWidget(self.page_home)     # index 0
         self.pages.addWidget(self.page_entry)    # index 1
@@ -136,6 +137,10 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         self.ribbon_title.setText(title)
 
+        # Refresh data on page entry
+        if index == 1:  # Transaction Entry
+            self.page_entry.reload_accounts()
+
         # Active nav styling
         for i, btn in enumerate(self.nav_buttons):
             is_active = (i == index)
@@ -143,3 +148,4 @@ class MainWindow(QMainWindow):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
             btn.update()
+
