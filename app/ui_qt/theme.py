@@ -104,3 +104,4 @@ QWidget {{
     font-weight: 600;
 }}
 """.strip()
+

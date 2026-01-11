@@ -1,5 +1,6 @@
 # app/ui_qt/main_window.py
 from __future__ import annotations
+from app.ui_qt.bulk_import import BulkImportPage
 from app.ui_qt.transaction_entry import TransactionEntryPage
 from app.ui_qt.transaction_history import TransactionHistoryPage
 from app.ui_qt.accounts_manager import AccountsManagerPage
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
         self.page_home = self._make_placeholder_page("Home (dashboard placeholder)")
         self.page_entry = TransactionEntryPage()
         self.page_history = TransactionHistoryPage()
-        self.page_import = self._make_placeholder_page("Bulk Import (CSV/PDF)")
+        self.page_import = BulkImportPage()
         self.page_accounts = AccountsManagerPage()
 
         self.pages.addWidget(self.page_home)     # index 0
