@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ui_qt.accounts_manager import AddAccountDialog
 from app.importers.statement_csv import extract_transactions_from_csv, IGNORE
 from app.accounts import get_primary_accounts, get_balancing_accounts
 from app.db import SessionLocal
@@ -29,8 +31,9 @@ from app.ledger import create_transaction
 
 
 REQUIRED_KEYS = ("date", "amount")
-OPTIONAL_KEYS = ("merchant", "description")  # keep it simple for now
-
+OPTIONAL_KEYS = ("merchant", "description")
+ADD_NEW_ACCOUNT = "Add new account…"
+ADD_NEW_ACCOUNT_DATA = "__add_new__"
 
 class CsvMappingDialog(QDialog):
     def __init__(self, parent: QWidget, columns: list[str]) -> None:
@@ -64,6 +67,18 @@ class CsvMappingDialog(QDialog):
             self._boxes[key] = box
             form.addRow(key.capitalize(), box)
 
+        # Primary account (applies to all imported rows)
+        self.primary_combo = QComboBox()
+        self.primary_combo.addItem("— Select primary account —", None)
+
+        with SessionLocal() as session:
+            primaries = get_primary_accounts(session, active_only=True)
+
+        for acc in primaries:
+            self.primary_combo.addItem(acc.name, int(acc.id))
+
+        form.addRow("Primary account", self.primary_combo)
+
         # Buttons
         btns = QHBoxLayout()
         btns.addStretch(1)
@@ -89,15 +104,26 @@ class CsvMappingDialog(QDialog):
         for key in OPTIONAL_KEYS:
             mapping[key] = str(self._boxes[key].currentData())
 
+        primary_id = self.primary_combo.currentData()
+        if not primary_id:
+            QMessageBox.warning(self, "Missing", "Primary account is required.")
+            return
+
         self._mapping = mapping
+        self._primary_id = int(primary_id)
         self.accept()
 
     @property
     def mapping(self) -> dict[str, str] | None:
         return self._mapping
+    
+    @property
+    def primary_id(self) -> int | None:
+        return getattr(self, "_primary_id", None)
+
 
 class ImportAccountsDialog(QDialog):
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(self, parent: QWidget, default_primary_id: int | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Import settings")
         self._result: dict | None = None
@@ -123,6 +149,12 @@ class ImportAccountsDialog(QDialog):
 
         for acc in primaries:
             self.primary_combo.addItem(acc.name, acc.id)
+
+        if default_primary_id is not None:
+            idx = self.primary_combo.findData(int(default_primary_id))
+            if idx >= 0:
+                self.primary_combo.setCurrentIndex(idx)
+
 
         for acc in bals:
             self.balancing_combo.addItem(acc.name, acc.id)
@@ -168,6 +200,8 @@ class BulkImportPage(QFrame):
         self.setObjectName("Page")
         
         self.rows: list[dict] = []
+        self.primary_account_id: int | None = None
+        self._balancing_combos: list[QComboBox] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 16, 16, 16)
@@ -197,20 +231,118 @@ class BulkImportPage(QFrame):
         outer.addWidget(self.file_label)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Description", "Amount"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(
+            ["Date", "Merchant", "Description", "Amount", "Balancing"]
+        )
         self.table.setAlternatingRowColors(True)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+        # Enable editing – this is now a staging grid
+        self.table.setEditTriggers(
+            QTableWidget.DoubleClicked | QTableWidget.SelectedClicked
+        )
+
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         outer.addWidget(self.table, 1)
 
+    def _load_balancing_accounts(self) -> list[tuple[int, str]]:
+        """Return [(id, name), ...] for active balancing accounts."""
+        with SessionLocal() as session:
+            bals = get_balancing_accounts(session, active_only=True)
+        return [(int(a.id), str(a.name)) for a in bals]
+
+    def _make_balancing_combo(self, current_name: str = "") -> QComboBox:
+        combo = QComboBox()
+        combo.setEditable(True)  # lets you type to search
+        combo.lineEdit().setPlaceholderText("Select…")  # needs QLineEdit import
+
+        accounts = self._load_balancing_accounts()
+
+        # Add accounts
+        current_index = -1
+        for i, (acc_id, name) in enumerate(accounts):
+            combo.addItem(name, acc_id)
+            if current_name and name.strip().lower() == current_name.strip().lower():
+                current_index = i
+
+        # Divider-ish: just add the special option at the bottom
+        combo.addItem(ADD_NEW_ACCOUNT, ADD_NEW_ACCOUNT_DATA)
+
+        if current_index >= 0:
+            combo.setCurrentIndex(current_index)
+        else:
+            combo.setCurrentIndex(-1)
+
+        combo.currentIndexChanged.connect(lambda _=None, c=combo: self._on_balancing_changed(c))
+        return combo
+
+    def _on_balancing_changed(self, combo: QComboBox) -> None:
+        if combo.currentData() != ADD_NEW_ACCOUNT_DATA:
+            return
+
+        dlg = AddAccountDialog(self)
+        if dlg.exec() != QDialog.Accepted or not dlg.payload:
+            # user cancelled: revert selection to blank
+            combo.setCurrentIndex(-1)
+            return
+
+        payload = dlg.payload
+
+        # Only allow balancing types here
+        if payload.acc_type in ("asset", "liability"):
+            QMessageBox.warning(self, "Invalid", "Balancing accounts must be income, expense, or adjustment.")
+            combo.setCurrentIndex(-1)
+            return
+
+        try:
+            with SessionLocal() as session:
+                # AccountsManager uses add_balancing_account under the hood.
+                # We can call the same helper directly here for consistency.
+                from app.accounts import add_balancing_account
+                new_acc = add_balancing_account(session, payload.name, payload.acc_type)
+                new_id = int(new_acc.id)
+                new_name = str(new_acc.name)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to add account:\n{e}")
+            combo.setCurrentIndex(-1)
+            return
+
+        # Refresh every balancing combo so the new account is available everywhere
+        accounts = self._load_balancing_accounts()
+
+        for c in self._balancing_combos:
+            current = c.currentData()
+
+            c.blockSignals(True)
+            c.clear()
+
+            for acc_id, name in accounts:
+                c.addItem(name, acc_id)
+
+            c.addItem(ADD_NEW_ACCOUNT, ADD_NEW_ACCOUNT_DATA)
+
+            # Preserve previous selection where possible
+            if current == ADD_NEW_ACCOUNT_DATA or current is None:
+                c.setCurrentIndex(-1)
+            else:
+                idx = c.findData(current)
+                c.setCurrentIndex(idx if idx >= 0 else -1)
+
+            c.blockSignals(False)
+
+        # Finally, select the newly created account in the combo that triggered the add
+        idx_new = combo.findData(new_id)
+        if idx_new >= 0:
+            combo.setCurrentIndex(idx_new)
+
     def _reset_import_state(self) -> None:
         """Clear current loaded rows + preview and disable commit."""
         self.rows = []
+        self.primary_account_id = None
         self.commit_btn.setEnabled(False)
         self.table.setRowCount(0)
-
+        self._balancing_combos = []
 
     def choose_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -236,9 +368,11 @@ class BulkImportPage(QFrame):
             return
 
         dlg = CsvMappingDialog(self, columns)
-        if dlg.exec() != QDialog.Accepted or not dlg.mapping:
-            # user cancelled mapping => keep state reset (prevents stale commit)
+        if dlg.exec() != QDialog.Accepted or not dlg.mapping or not dlg.primary_id:
+            # user cancelled mapping or missing required selections
             return
+
+        self.primary_account_id = dlg.primary_id
 
         try:
             rows = extract_transactions_from_csv(path, dlg.mapping)
@@ -254,14 +388,24 @@ class BulkImportPage(QFrame):
 
     def _load_preview(self, rows: list[dict]) -> None:
         self.table.setRowCount(min(len(rows), 500))  # cap preview
+        self._balancing_combos = []
 
         for r, row in enumerate(rows[:500]):
             self._set_item(r, 0, str(row.get("date", "")))
             self._set_item(r, 1, str(row.get("merchant", "")))
             self._set_item(r, 2, str(row.get("description", "")))
-            self._set_item(r, 3, str(row.get("amount", "")), align=Qt.AlignRight | Qt.AlignVCenter)
+            self._set_item(
+                r, 3, str(row.get("amount", "")),
+                align=Qt.AlignRight | Qt.AlignVCenter
+            )
+            combo = self._make_balancing_combo(str(row.get("balancing", "")))
+            self._balancing_combos.append(combo)
+            self.table.setCellWidget(r, 4, combo)
+
+
 
         self.table.resizeColumnsToContents()
+        self.table.setColumnWidth(4, 220)
 
     def _set_item(self, row: int, col: int, text: str, align: Qt.AlignmentFlag | None = None) -> None:
         item = QTableWidgetItem(text)
@@ -270,28 +414,60 @@ class BulkImportPage(QFrame):
         self.table.setItem(row, col, item)
 
     def commit_to_db(self) -> None:
-        if not self.rows:
+        if self.table.rowCount() == 0:
             QMessageBox.information(self, "Nothing to commit", "Load a CSV first.")
             return
-        
 
-        dlg = ImportAccountsDialog(self)
-        if dlg.exec() != QDialog.Accepted or not dlg.result:
+        if not self.primary_account_id:
+            QMessageBox.warning(
+                self,
+                "Missing primary",
+                "Primary account is not set. Re-import the CSV and choose a primary account in the mapping dialog.",
+            )
             return
 
-        primary_id = dlg.result["primary_id"]
-        balancing_id = dlg.result["balancing_id"]
+        resp = QMessageBox.question(
+            self,
+            "Confirm commit",
+            "Are you sure you want to commit these staged transactions to the database?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        primary_id = int(self.primary_account_id)
 
         ok, skipped = 0, 0
         first_error = None
 
+        def cell_text(r: int, c: int) -> str:
+            item = self.table.item(r, c)
+            return "" if item is None else str(item.text()).strip()
+
         try:
             with SessionLocal() as session:
-                for row in self.rows:
+                for r in range(self.table.rowCount()):
                     try:
-                        ts = self._parse_date_to_timestamp(row.get("date", ""))
-                        desc = self._build_description(row.get("merchant", ""), row.get("description", ""))
-                        amount_pennies = self._parse_amount_to_pennies(row.get("amount", ""))
+                        date_s = cell_text(r, 0)
+                        merchant = cell_text(r, 1)
+                        desc_s = cell_text(r, 2)
+                        amount_s = cell_text(r, 3)
+
+                        # Balancing is a dropdown widget in column 4
+                        w = self.table.cellWidget(r, 4)
+                        if not isinstance(w, QComboBox):
+                            skipped += 1
+                            continue
+
+                        balancing_id = w.currentData()
+                        if not balancing_id or balancing_id == ADD_NEW_ACCOUNT_DATA:
+                            skipped += 1
+                            continue
+
+                        ts = self._parse_date_to_timestamp(date_s)
+                        desc = self._build_description(merchant, desc_s)
+                        amount_pennies = self._parse_amount_to_pennies(amount_s)
 
                         if not desc or amount_pennies is None or ts is None:
                             skipped += 1
@@ -303,7 +479,7 @@ class BulkImportPage(QFrame):
                             description=desc,
                             primary_account_id=primary_id,
                             amount_pennies=amount_pennies,
-                            balancing_account_id=balancing_id,
+                            balancing_account_id=int(balancing_id),
                         )
                         ok += 1
 
@@ -325,8 +501,6 @@ class BulkImportPage(QFrame):
         if ok > 0:
             self._reset_import_state()
             self.file_label.setText("Committed.")
-
-
 
     def _build_description(self, merchant: str, description: str) -> str:
         merchant = (merchant or "").strip()
