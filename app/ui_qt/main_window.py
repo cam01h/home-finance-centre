@@ -1,5 +1,7 @@
 # app/ui_qt/main_window.py
 from __future__ import annotations
+from app.ui_qt.transaction_entry import TransactionEntryPage
+from app.ui_qt.transaction_history import TransactionHistoryPage
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
@@ -87,8 +89,8 @@ class MainWindow(QMainWindow):
         self.pages.setObjectName("Pages")
 
         self.page_home = self._make_placeholder_page("Home (dashboard placeholder)")
-        self.page_entry = self._make_placeholder_page("Transaction Entry (new rows only)")
-        self.page_history = self._make_placeholder_page("Transaction History (DB rows)")
+        self.page_entry = TransactionEntryPage()
+        self.page_history = TransactionHistoryPage()
         self.page_import = self._make_placeholder_page("Bulk Import (CSV/PDF)")
         self.page_accounts = self._make_placeholder_page("Accounts Manager")
 
