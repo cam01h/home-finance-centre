@@ -1,0 +1,73 @@
+/* =========================
+   Global
+   ========================= */
+QWidget {
+    background-color: #121417;
+    color: #e6e6e6;
+    font-family: Segoe UI, Inter, Arial;
+    font-size: 14px;
+}
+
+/* =========================
+   Sidebar
+   ========================= */
+#Sidebar {
+    background-color: #0e1114;
+    border-right: 1px solid #1f2328;
+}
+
+#SidebarTitle {
+    font-size: 16px;
+    font-weight: 600;
+    padding-bottom: 8px;
+}
+
+/* Nav buttons */
+#NavButton {
+    background-color: transparent;
+    border: none;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 6px;
+}
+
+#NavButton:hover {
+    background-color: #1a1f25;
+}
+
+#NavButton:pressed {
+    background-color: #222832;
+}
+
+#NavButton[active="true"] {
+    background-color: #222832;
+    border: 1px solid #2d3440;
+}
+
+/* =========================
+   Ribbon / Header
+   ========================= */
+#Ribbon {
+    background-color: #161a1f;
+    border: 1px solid #1f2328;
+    border-radius: 8px;
+}
+
+#RibbonTitle {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+/* =========================
+   Pages
+   ========================= */
+#Page {
+    background-color: #161a1f;
+    border: 1px solid #1f2328;
+    border-radius: 8px;
+}
+
+#PageTitle {
+    font-size: 18px;
+    font-weight: 600;
+}
