@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List
 
-from sqlalchemy import ForeignKey, String, Integer, DateTime, CheckConstraint
+from sqlalchemy import ForeignKey, String, Integer, DateTime, CheckConstraint, Column, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -14,19 +14,29 @@ class Base(DeclarativeBase):
 class Account(Base):
     __tablename__ = "accounts"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
-    type: Mapped[str] = mapped_column(String(20), nullable=False)
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False, unique=True)
 
-    # Keep account types sane (SQLite will enforce this)
+    # Existing concept: the “kind” of account
+    type = Column(String, nullable=False)
+
+    # New: lets you “close” an account without deleting it (history stays intact)
+    is_active = Column(Boolean, nullable=False, default=True)
+
     __table_args__ = (
         CheckConstraint(
-            "type IN ('asset','liability','income','expense','equity')",
-            name="ck_accounts_type",
+            "type IN ('asset','liability','income','expense','adjustment')",
+            name="ck_accounts_type"
         ),
     )
 
-    entries: Mapped[List["Entry"]] = relationship(back_populates="account")
+    # Existing relationship (assuming you already have Entry.account back_populates="account")
+    entries = relationship("Entry", back_populates="account")
+
+    # Optional convenience (no DB column)
+    @property
+    def is_primary(self) -> bool:
+        return self.type in ("asset", "liability")
 
 
 class Transaction(Base):
