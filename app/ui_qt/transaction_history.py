@@ -244,7 +244,7 @@ class TransactionHistoryPage(QFrame):
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
 
         outer.addWidget(self.table, 1)
 
@@ -303,44 +303,72 @@ class TransactionHistoryPage(QFrame):
         self.refresh()
 
     def delete_selected(self) -> None:
-        row = self.table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Nothing selected", "Select a transaction row first.")
+        # Collect unique transaction IDs from selected rows
+        rows = sorted({idx.row() for idx in self.table.selectionModel().selectedRows()})
+        if not rows:
+            QMessageBox.information(self, "Nothing selected", "Select one or more transaction rows first.")
             return
 
-        tx_id_item = self.table.item(row, 0)
-        if not tx_id_item:
+        tx_ids: list[int] = []
+        for r in rows:
+            item = self.table.item(r, 0)  # ID column
+            if not item:
+                continue
+            try:
+                tx_ids.append(int(item.text()))
+            except ValueError:
+                continue
+
+        # De-duplicate while preserving order
+        seen: set[int] = set()
+        tx_ids = [x for x in tx_ids if not (x in seen or seen.add(x))]
+
+        if not tx_ids:
+            QMessageBox.warning(self, "Error", "Could not read any transaction IDs from the selection.")
             return
 
-        try:
-            tx_id = int(tx_id_item.text())
-        except ValueError:
-            QMessageBox.warning(self, "Error", "Could not read selected transaction ID.")
-            return
-
+        plural = "s" if len(tx_ids) != 1 else ""
         resp = QMessageBox.question(
             self,
             "Confirm delete",
-            f"Delete transaction #{tx_id}?\n\nThis cannot be undone.",
+            f"Delete {len(tx_ids)} transaction{plural}?\n\nThis cannot be undone.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if resp != QMessageBox.Yes:
             return
 
+        deleted_count = 0
+        not_found_count = 0
+        first_error: str | None = None
+
         try:
             with SessionLocal() as session:
-                deleted = delete_transaction(session, tx_id)
+                for tx_id in tx_ids:
+                    try:
+                        ok = delete_transaction(session, tx_id)
+                        if ok:
+                            deleted_count += 1
+                        else:
+                            not_found_count += 1
+                    except Exception as e:
+                        # keep going, but remember the first error
+                        if first_error is None:
+                            first_error = str(e)
         except Exception as e:
-            QMessageBox.critical(self, "Delete error", f"Failed to delete transaction:\n{e}")
-            return
-
-        if not deleted:
-            QMessageBox.information(self, "Not found", "That transaction no longer exists.")
-            self.refresh()
+            QMessageBox.critical(self, "Delete error", f"Failed to delete transactions:\n{e}")
             return
 
         self.refresh()
+        self.table.clearSelection()
+
+        msg = f"Deleted: {deleted_count}"
+        if not_found_count:
+            msg += f"\nNot found: {not_found_count}"
+        if first_error:
+            msg += f"\n\nFirst error:\n{first_error}"
+
+        QMessageBox.information(self, "Delete complete", msg)
 
     def _set_item(self, row: int, col: int, text: str, align: Qt.AlignmentFlag | None = None) -> None:
         item = QTableWidgetItem(text)
