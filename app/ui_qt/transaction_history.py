@@ -29,7 +29,7 @@ from sqlalchemy.orm import selectinload
 from app.accounts import get_balancing_accounts, get_primary_accounts
 from app.db import SessionLocal
 from app.models import Transaction, Entry
-
+from app.ledger import delete_transaction
 
 def _pennies_to_gbp(amount_pennies: int) -> str:
     return f"{amount_pennies / 100:,.2f}"
@@ -223,13 +223,17 @@ class TransactionHistoryPage(QFrame):
         self.edit_btn.setMinimumHeight(32)
         self.edit_btn.clicked.connect(self.edit_selected)
 
+        self.delete_btn = QPushButton("Delete selected")
+        self.delete_btn.setMinimumHeight(32)
+        self.delete_btn.clicked.connect(self.delete_selected)
+
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setMinimumHeight(32)
         self.refresh_btn.clicked.connect(self.refresh)
 
         header.addWidget(self.edit_btn)
+        header.addWidget(self.delete_btn)
         header.addWidget(self.refresh_btn)
-
         outer.addLayout(header)
 
         self.table = QTableWidget()
@@ -294,6 +298,46 @@ class TransactionHistoryPage(QFrame):
             self._apply_edit(tx_id, payload)
         except Exception as e:
             QMessageBox.critical(self, "Save error", f"Failed to save changes:\n{e}")
+            return
+
+        self.refresh()
+
+    def delete_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Nothing selected", "Select a transaction row first.")
+            return
+
+        tx_id_item = self.table.item(row, 0)
+        if not tx_id_item:
+            return
+
+        try:
+            tx_id = int(tx_id_item.text())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Could not read selected transaction ID.")
+            return
+
+        resp = QMessageBox.question(
+            self,
+            "Confirm delete",
+            f"Delete transaction #{tx_id}?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        try:
+            with SessionLocal() as session:
+                deleted = delete_transaction(session, tx_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Delete error", f"Failed to delete transaction:\n{e}")
+            return
+
+        if not deleted:
+            QMessageBox.information(self, "Not found", "That transaction no longer exists.")
+            self.refresh()
             return
 
         self.refresh()

@@ -39,3 +39,18 @@ def create_transaction(
     session.refresh(tx)
 
     return tx
+
+def delete_transaction(session: Session, transaction_id: int) -> bool:
+    """
+    Delete a transaction (and its entries via ORM cascade).
+
+    Returns:
+        True if the transaction existed and was deleted, False if not found.
+    """
+    tx = session.get(Transaction, int(transaction_id))
+    if not tx:
+        return False
+
+    session.delete(tx)
+    session.commit()
+    return True
