@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
+from email import header
+from sqlalchemy import select
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -20,12 +21,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from sqlalchemy import select
-
-from app.accounts import add_balancing_account, add_primary_account
 from app.db import SessionLocal
-from app.models import Account
-
+from app.models import Account, AccountLink
+from app.accounts import (
+    add_balancing_account,
+    add_primary_account,
+    add_account_link,
+    delete_account_link,
+)
 
 ACCOUNT_TYPES = ("asset", "liability", "income", "expense", "adjustment")
 
@@ -97,6 +100,56 @@ class AddAccountDialog(QDialog):
     def payload(self) -> NewAccountPayload | None:
         return self._payload
 
+class LinkAccountsDialog(QDialog):
+    def __init__(
+        self,
+        accounts: list[dict],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Link accounts")
+
+        self.asset_combo = QComboBox()
+        self.liability_combo = QComboBox()
+
+        # Build dropdown lists from the accounts we were given
+        assets = [a for a in accounts if a.get("type") == "asset" and a.get("is_active")]
+        liabilities = [a for a in accounts if a.get("type") == "liability" and a.get("is_active")]
+
+        for a in assets:
+            self.asset_combo.addItem(a["name"], a["id"])
+
+        for a in liabilities:
+            self.liability_combo.addItem(a["name"], a["id"])
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+        outer.setSpacing(12)
+
+        form = QFormLayout()
+        form.addRow("Asset account", self.asset_combo)
+        form.addRow("Liability account", self.liability_combo)
+        outer.addLayout(form)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+
+        self.cancel_btn = QPushButton("Cancel")
+        self.link_btn = QPushButton("Link")
+        self.link_btn.setMinimumHeight(34)
+
+        self.cancel_btn.clicked.connect(self.reject)
+        self.link_btn.clicked.connect(self.accept)
+
+        btns.addWidget(self.cancel_btn)
+        btns.addWidget(self.link_btn)
+        outer.addLayout(btns)
+
+    @property
+    def selection(self) -> tuple[int | None, int | None]:
+        asset_id = self.asset_combo.currentData()
+        liability_id = self.liability_combo.currentData()
+        return asset_id, liability_id
 
 class AccountsManagerPage(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -108,7 +161,7 @@ class AccountsManagerPage(QFrame):
         outer.setSpacing(12)
 
         header = QHBoxLayout()
-        title = QLabel("Accounts Manager")
+        title = QLabel("Accounts")
         title.setObjectName("PageTitle")
         header.addWidget(title)
         header.addStretch(1)
@@ -116,6 +169,14 @@ class AccountsManagerPage(QFrame):
         self.add_btn = QPushButton("Add account")
         self.add_btn.setMinimumHeight(32)
         self.add_btn.clicked.connect(self.add_account)
+
+        self.link_btn = QPushButton("Link accounts")
+        self.link_btn.setMinimumHeight(32)
+        self.link_btn.clicked.connect(self.open_link_accounts_dialog)
+
+        self.remove_link_btn = QPushButton("Remove account link")
+        self.remove_link_btn.setMinimumHeight(32)
+        self.remove_link_btn.clicked.connect(self.remove_selected_link)
 
         self.toggle_btn = QPushButton("Toggle active")
         self.toggle_btn.setMinimumHeight(32)
@@ -130,6 +191,7 @@ class AccountsManagerPage(QFrame):
         header.addWidget(self.refresh_btn)
         outer.addLayout(header)
 
+        # Accounts table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["ID", "Name", "Type", "Active"])
@@ -139,19 +201,83 @@ class AccountsManagerPage(QFrame):
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         outer.addWidget(self.table, 1)
 
+        # Account links table
+        # Account links header (title + buttons)
+        links_header = QHBoxLayout()
+
+        links_title = QLabel("Account links")
+        links_title.setObjectName("PageTitle")
+        links_header.addWidget(links_title)
+        links_header.addStretch(1)
+
+        links_header.addWidget(self.link_btn)
+        links_header.addWidget(self.remove_link_btn)
+
+        outer.addLayout(links_header)
+
+        # Account links table
+        self.links_table = QTableWidget()
+        self.links_table.setColumnCount(3)
+        self.links_table.setHorizontalHeaderLabels(["Link ID", "Asset", "Liability"])
+        self.links_table.setAlternatingRowColors(True)
+        self.links_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.links_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.links_table.setSelectionMode(QTableWidget.SingleSelection)
+        outer.addWidget(self.links_table, 0)
+
         self.refresh()
 
-    def refresh(self) -> None:
+    def open_link_accounts_dialog(self) -> None:
         accounts = self._load_accounts()
 
-        self.table.setRowCount(len(accounts))
-        for r, acc in enumerate(accounts):
-            self._set_item(r, 0, str(acc.id), align=Qt.AlignRight | Qt.AlignVCenter)
-            self._set_item(r, 1, acc.name)
-            self._set_item(r, 2, acc.type)
-            self._set_item(r, 3, "Yes" if acc.is_active else "No")
+        rows = [
+            {
+                "id": acc.id,
+                "name": acc.name,
+                "type": acc.type,
+                "is_active": acc.is_active,
+            }
+            for acc in accounts
+        ]
 
-        self.table.resizeColumnsToContents()
+        dlg = LinkAccountsDialog(rows, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            asset_id, liability_id = dlg.selection
+            if asset_id is None or liability_id is None:
+                QMessageBox.warning(self, "Validation error", "Please select both an asset and a liability.")
+                return
+
+            try:
+                add_account_link(int(asset_id), int(liability_id))
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create link:\n{e}")
+                return
+
+            QMessageBox.information(self, "Linked", "Accounts linked successfully.")
+
+    def remove_selected_link(self) -> None:
+        row = self.links_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Nothing selected", "Select a link to remove.")
+            return
+
+        id_item = self.links_table.item(row, 0)
+        if not id_item:
+            return
+
+        try:
+            link_id = int(id_item.text())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Could not read selected link ID.")
+            return
+
+        try:
+            delete_account_link(link_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to remove link:\n{e}")
+            return
+
+        self.refresh()
 
     def add_account(self) -> None:
         dlg = AddAccountDialog(self)
@@ -206,9 +332,46 @@ class AccountsManagerPage(QFrame):
     def _load_accounts(self) -> list[Account]:
         with SessionLocal() as session:
             return session.execute(select(Account).order_by(Account.name)).scalars().all()
+        
+    def _load_links(self) -> list[AccountLink]:
+        with SessionLocal() as session:
+            return session.execute(select(AccountLink).order_by(AccountLink.id)).scalars().all()
 
-    def _set_item(self, row: int, col: int, text: str, align: Qt.AlignmentFlag | None = None) -> None:
+    def refresh(self) -> None:
+        accounts = self._load_accounts()
+        account_name_by_id = {acc.id: acc.name for acc in accounts}
+
+        self.table.setRowCount(len(accounts))
+        for r, acc in enumerate(accounts):
+            self._set_item(self.table, r, 0, str(acc.id), align=Qt.AlignRight | Qt.AlignVCenter)
+            self._set_item(self.table, r, 1, acc.name)
+            self._set_item(self.table, r, 2, acc.type)
+            self._set_item(self.table, r, 3, "Yes" if acc.is_active else "No")
+
+        self.table.resizeColumnsToContents()
+
+        links = self._load_links()
+        self.links_table.setRowCount(len(links))
+        for r, link in enumerate(links):
+            asset_name = account_name_by_id.get(link.asset_account_id, f"(missing #{link.asset_account_id})")
+            liability_name = account_name_by_id.get(link.liability_account_id, f"(missing #{link.liability_account_id})")
+
+            self._set_item(self.links_table, r, 0, str(link.id), align=Qt.AlignRight | Qt.AlignVCenter)
+            self._set_item(self.links_table, r, 1, asset_name)
+            self._set_item(self.links_table, r, 2, liability_name)
+
+        self.links_table.resizeColumnsToContents()
+
+    def _set_item(
+        self,
+        table: QTableWidget,
+        row: int,
+        col: int,
+        text: str,
+        align: Qt.AlignmentFlag | None = None,
+    ) -> None:
         item = QTableWidgetItem(text)
         if align is not None:
             item.setTextAlignment(int(align))
-        self.table.setItem(row, col, item)
+        table.setItem(row, col, item)
+
