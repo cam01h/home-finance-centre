@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email import header
 from sqlalchemy import select
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -186,8 +187,6 @@ class AccountsManagerPage(QFrame):
         self.refresh_btn.clicked.connect(self.refresh)
 
         header.addWidget(self.add_btn)
-        header.addWidget(self.link_btn)
-        header.addWidget(self.remove_link_btn)
         header.addWidget(self.toggle_btn)
         header.addWidget(self.refresh_btn)
         outer.addLayout(header)
@@ -203,10 +202,20 @@ class AccountsManagerPage(QFrame):
         outer.addWidget(self.table, 1)
 
         # Account links table
+        # Account links header (title + buttons)
+        links_header = QHBoxLayout()
+
         links_title = QLabel("Account links")
         links_title.setObjectName("PageTitle")
-        outer.addWidget(links_title)
+        links_header.addWidget(links_title)
+        links_header.addStretch(1)
 
+        links_header.addWidget(self.link_btn)
+        links_header.addWidget(self.remove_link_btn)
+
+        outer.addLayout(links_header)
+
+        # Account links table
         self.links_table = QTableWidget()
         self.links_table.setColumnCount(3)
         self.links_table.setHorizontalHeaderLabels(["Link ID", "Asset", "Liability"])
@@ -215,7 +224,6 @@ class AccountsManagerPage(QFrame):
         self.links_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.links_table.setSelectionMode(QTableWidget.SingleSelection)
         outer.addWidget(self.links_table, 0)
-
 
         self.refresh()
 
