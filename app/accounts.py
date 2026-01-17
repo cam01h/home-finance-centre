@@ -3,6 +3,10 @@ from sqlalchemy.orm import Session
 
 from .models import Account
 
+from app.models import AccountLink
+from app.db import SessionLocal
+
+
 
 PRIMARY_TYPES = ("asset", "liability")
 BALANCING_TYPES = ("income", "expense", "adjustment")
@@ -49,3 +53,30 @@ def close_account(session: Session, account_id: int) -> None:
 
     account.is_active = False
     session.commit()
+
+def get_account_links():
+    """Return all asset ↔ liability links."""
+    with SessionLocal() as session:
+        return session.query(AccountLink).all()
+
+
+def add_account_link(asset_account_id: int, liability_account_id: int):
+    """Create a new link between an asset and a liability account."""
+    with SessionLocal() as session:
+        link = AccountLink(
+            asset_account_id=asset_account_id,
+            liability_account_id=liability_account_id,
+        )
+        session.add(link)
+        session.commit()
+        return link
+
+
+def delete_account_link(link_id: int):
+    """Delete an existing account link."""
+    with SessionLocal() as session:
+        link = session.get(AccountLink, link_id)
+        if link:
+            session.delete(link)
+            session.commit()
+
