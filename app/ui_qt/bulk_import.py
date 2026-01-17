@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app.ui_qt.accounts_manager import AddAccountDialog
 from app.importers.statement_csv import extract_transactions_from_csv, IGNORE
+from app.importers.statement_pdf import extract_transactions_from_pdf
 from app.accounts import get_primary_accounts, get_balancing_accounts
 from app.db import SessionLocal
 from app.ledger import create_transaction
@@ -217,12 +218,21 @@ class BulkImportPage(QFrame):
         self.pick_btn.setMinimumHeight(32)
         self.pick_btn.clicked.connect(self.choose_csv)
 
+        self.pick_btn = QPushButton("Choose CSV…")
+        self.pick_btn.setMinimumHeight(32)
+        self.pick_btn.clicked.connect(self.choose_csv)
+
+        self.pick_pdf_btn = QPushButton("Choose PDF…")
+        self.pick_pdf_btn.setMinimumHeight(32)
+        self.pick_pdf_btn.clicked.connect(self.choose_pdf)
+
         self.commit_btn = QPushButton("Commit to DB")
         self.commit_btn.setMinimumHeight(32)
         self.commit_btn.setEnabled(False)
         self.commit_btn.clicked.connect(self.commit_to_db)
 
         header.addWidget(self.pick_btn)
+        header.addWidget(self.pick_pdf_btn)
         header.addWidget(self.commit_btn)
         outer.addLayout(header)
 
@@ -382,6 +392,46 @@ class BulkImportPage(QFrame):
             return
 
         self._load_preview(rows)
+
+        self.rows = rows
+        self.commit_btn.setEnabled(len(self.rows) > 0)
+
+    def choose_pdf(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose statement PDF",
+            "",
+            "PDF files (*.pdf);;All files (*.*)",
+        )
+        if not path:
+            return
+
+        # New file selection => clear any previous loaded rows/preview immediately
+        self._reset_import_state()
+        self.file_label.setText(str(Path(path)))
+
+        # Ask for primary + default balancing (we can use balancing as a default selection)
+        dlg = ImportAccountsDialog(self)
+        if dlg.exec() != QDialog.Accepted or not dlg.result:
+            return
+
+        self.primary_account_id = int(dlg.result["primary_id"])
+        default_balancing_id = int(dlg.result["balancing_id"])
+
+        try:
+            rows = extract_transactions_from_pdf(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Import error", f"Failed to parse PDF:\n{e}")
+            # keep state reset
+            return
+
+        self._load_preview(rows)
+
+        # Apply default balancing selection to every row (user can override per-row)
+        for c in self._balancing_combos:
+            idx = c.findData(default_balancing_id)
+            if idx >= 0:
+                c.setCurrentIndex(idx)
 
         self.rows = rows
         self.commit_btn.setEnabled(len(self.rows) > 0)
