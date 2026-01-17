@@ -24,7 +24,7 @@ from sqlalchemy import select
 
 from app.accounts import add_balancing_account, add_primary_account, add_account_link
 from app.db import SessionLocal
-from app.models import Account
+from app.models import Account, AccountLink
 
 
 ACCOUNT_TYPES = ("asset", "liability", "income", "expense", "adjustment")
@@ -158,7 +158,7 @@ class AccountsManagerPage(QFrame):
         outer.setSpacing(12)
 
         header = QHBoxLayout()
-        title = QLabel("Accounts Manager")
+        title = QLabel("Accounts")
         title.setObjectName("PageTitle")
         header.addWidget(title)
         header.addStretch(1)
@@ -185,6 +185,7 @@ class AccountsManagerPage(QFrame):
         header.addWidget(self.refresh_btn)
         outer.addLayout(header)
 
+        # Accounts table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["ID", "Name", "Type", "Active"])
@@ -193,6 +194,21 @@ class AccountsManagerPage(QFrame):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         outer.addWidget(self.table, 1)
+
+        # Account links table
+        links_title = QLabel("Account links")
+        links_title.setObjectName("PageTitle")
+        outer.addWidget(links_title)
+
+        self.links_table = QTableWidget()
+        self.links_table.setColumnCount(3)
+        self.links_table.setHorizontalHeaderLabels(["Link ID", "Asset", "Liability"])
+        self.links_table.setAlternatingRowColors(True)
+        self.links_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.links_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.links_table.setSelectionMode(QTableWidget.SingleSelection)
+        outer.addWidget(self.links_table, 0)
+
 
         self.refresh()
 
