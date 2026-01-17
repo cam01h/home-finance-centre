@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-
+from sqlalchemy import select
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -20,12 +20,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from sqlalchemy import select
-
-from app.accounts import add_balancing_account, add_primary_account, add_account_link
 from app.db import SessionLocal
 from app.models import Account, AccountLink
-
+from app.accounts import (
+    add_balancing_account,
+    add_primary_account,
+    add_account_link,
+    delete_account_link,
+)
 
 ACCOUNT_TYPES = ("asset", "liability", "income", "expense", "adjustment")
 
@@ -171,6 +173,10 @@ class AccountsManagerPage(QFrame):
         self.link_btn.setMinimumHeight(32)
         self.link_btn.clicked.connect(self.open_link_accounts_dialog)
 
+        self.remove_link_btn = QPushButton("Remove account link")
+        self.remove_link_btn.setMinimumHeight(32)
+        self.remove_link_btn.clicked.connect(self.remove_selected_link)
+
         self.toggle_btn = QPushButton("Toggle active")
         self.toggle_btn.setMinimumHeight(32)
         self.toggle_btn.clicked.connect(self.toggle_active_selected)
@@ -181,6 +187,7 @@ class AccountsManagerPage(QFrame):
 
         header.addWidget(self.add_btn)
         header.addWidget(self.link_btn)
+        header.addWidget(self.remove_link_btn)
         header.addWidget(self.toggle_btn)
         header.addWidget(self.refresh_btn)
         outer.addLayout(header)
@@ -240,17 +247,29 @@ class AccountsManagerPage(QFrame):
 
             QMessageBox.information(self, "Linked", "Accounts linked successfully.")
 
-    def refresh(self) -> None:
-        accounts = self._load_accounts()
+    def remove_selected_link(self) -> None:
+        row = self.links_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Nothing selected", "Select a link to remove.")
+            return
 
-        self.table.setRowCount(len(accounts))
-        for r, acc in enumerate(accounts):
-            self._set_item(r, 0, str(acc.id), align=Qt.AlignRight | Qt.AlignVCenter)
-            self._set_item(r, 1, acc.name)
-            self._set_item(r, 2, acc.type)
-            self._set_item(r, 3, "Yes" if acc.is_active else "No")
+        id_item = self.links_table.item(row, 0)
+        if not id_item:
+            return
 
-        self.table.resizeColumnsToContents()
+        try:
+            link_id = int(id_item.text())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Could not read selected link ID.")
+            return
+
+        try:
+            delete_account_link(link_id)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to remove link:\n{e}")
+            return
+
+        self.refresh()
 
     def add_account(self) -> None:
         dlg = AddAccountDialog(self)
@@ -305,9 +324,46 @@ class AccountsManagerPage(QFrame):
     def _load_accounts(self) -> list[Account]:
         with SessionLocal() as session:
             return session.execute(select(Account).order_by(Account.name)).scalars().all()
+        
+    def _load_links(self) -> list[AccountLink]:
+        with SessionLocal() as session:
+            return session.execute(select(AccountLink).order_by(AccountLink.id)).scalars().all()
 
-    def _set_item(self, row: int, col: int, text: str, align: Qt.AlignmentFlag | None = None) -> None:
+    def refresh(self) -> None:
+        accounts = self._load_accounts()
+        account_name_by_id = {acc.id: acc.name for acc in accounts}
+
+        self.table.setRowCount(len(accounts))
+        for r, acc in enumerate(accounts):
+            self._set_item(self.table, r, 0, str(acc.id), align=Qt.AlignRight | Qt.AlignVCenter)
+            self._set_item(self.table, r, 1, acc.name)
+            self._set_item(self.table, r, 2, acc.type)
+            self._set_item(self.table, r, 3, "Yes" if acc.is_active else "No")
+
+        self.table.resizeColumnsToContents()
+
+        links = self._load_links()
+        self.links_table.setRowCount(len(links))
+        for r, link in enumerate(links):
+            asset_name = account_name_by_id.get(link.asset_account_id, f"(missing #{link.asset_account_id})")
+            liability_name = account_name_by_id.get(link.liability_account_id, f"(missing #{link.liability_account_id})")
+
+            self._set_item(self.links_table, r, 0, str(link.id), align=Qt.AlignRight | Qt.AlignVCenter)
+            self._set_item(self.links_table, r, 1, asset_name)
+            self._set_item(self.links_table, r, 2, liability_name)
+
+        self.links_table.resizeColumnsToContents()
+
+    def _set_item(
+        self,
+        table: QTableWidget,
+        row: int,
+        col: int,
+        text: str,
+        align: Qt.AlignmentFlag | None = None,
+    ) -> None:
         item = QTableWidgetItem(text)
         if align is not None:
             item.setTextAlignment(int(align))
-        self.table.setItem(row, col, item)
+        table.setItem(row, col, item)
+
