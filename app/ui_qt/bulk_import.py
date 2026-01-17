@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app.ui_qt.accounts_manager import AddAccountDialog
 from app.importers.statement_csv import extract_transactions_from_csv, IGNORE
+from app.importers.statement_pdf import extract_transactions_from_pdf
 from app.accounts import get_primary_accounts, get_balancing_accounts
 from app.db import SessionLocal
 from app.ledger import create_transaction
@@ -409,8 +410,31 @@ class BulkImportPage(QFrame):
         self._reset_import_state()
         self.file_label.setText(str(Path(path)))
 
-        # (Step 1 only) We'll wire parsing + staging load next.
+        # Ask for primary + default balancing (we can use balancing as a default selection)
+        dlg = ImportAccountsDialog(self)
+        if dlg.exec() != QDialog.Accepted or not dlg.result:
+            return
 
+        self.primary_account_id = int(dlg.result["primary_id"])
+        default_balancing_id = int(dlg.result["balancing_id"])
+
+        try:
+            rows = extract_transactions_from_pdf(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Import error", f"Failed to parse PDF:\n{e}")
+            # keep state reset
+            return
+
+        self._load_preview(rows)
+
+        # Apply default balancing selection to every row (user can override per-row)
+        for c in self._balancing_combos:
+            idx = c.findData(default_balancing_id)
+            if idx >= 0:
+                c.setCurrentIndex(idx)
+
+        self.rows = rows
+        self.commit_btn.setEnabled(len(self.rows) > 0)
 
     def _load_preview(self, rows: list[dict]) -> None:
         self.table.setRowCount(min(len(rows), 500))  # cap preview
