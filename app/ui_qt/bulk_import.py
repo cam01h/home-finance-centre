@@ -217,12 +217,21 @@ class BulkImportPage(QFrame):
         self.pick_btn.setMinimumHeight(32)
         self.pick_btn.clicked.connect(self.choose_csv)
 
+        self.pick_btn = QPushButton("Choose CSV…")
+        self.pick_btn.setMinimumHeight(32)
+        self.pick_btn.clicked.connect(self.choose_csv)
+
+        self.pick_pdf_btn = QPushButton("Choose PDF…")
+        self.pick_pdf_btn.setMinimumHeight(32)
+        self.pick_pdf_btn.clicked.connect(self.choose_pdf)
+
         self.commit_btn = QPushButton("Commit to DB")
         self.commit_btn.setMinimumHeight(32)
         self.commit_btn.setEnabled(False)
         self.commit_btn.clicked.connect(self.commit_to_db)
 
         header.addWidget(self.pick_btn)
+        header.addWidget(self.pick_pdf_btn)
         header.addWidget(self.commit_btn)
         outer.addLayout(header)
 
@@ -385,6 +394,23 @@ class BulkImportPage(QFrame):
 
         self.rows = rows
         self.commit_btn.setEnabled(len(self.rows) > 0)
+
+    def choose_pdf(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose statement PDF",
+            "",
+            "PDF files (*.pdf);;All files (*.*)",
+        )
+        if not path:
+            return
+
+        # New file selection => clear any previous loaded rows/preview immediately
+        self._reset_import_state()
+        self.file_label.setText(str(Path(path)))
+
+        # (Step 1 only) We'll wire parsing + staging load next.
+
 
     def _load_preview(self, rows: list[dict]) -> None:
         self.table.setRowCount(min(len(rows), 500))  # cap preview
