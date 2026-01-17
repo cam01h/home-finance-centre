@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 
 from sqlalchemy import select
 
-from app.accounts import add_balancing_account, add_primary_account
+from app.accounts import add_balancing_account, add_primary_account, add_account_link
 from app.db import SessionLocal
 from app.models import Account
 
@@ -97,6 +97,56 @@ class AddAccountDialog(QDialog):
     def payload(self) -> NewAccountPayload | None:
         return self._payload
 
+class LinkAccountsDialog(QDialog):
+    def __init__(
+        self,
+        accounts: list[dict],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Link accounts")
+
+        self.asset_combo = QComboBox()
+        self.liability_combo = QComboBox()
+
+        # Build dropdown lists from the accounts we were given
+        assets = [a for a in accounts if a.get("type") == "asset" and a.get("is_active")]
+        liabilities = [a for a in accounts if a.get("type") == "liability" and a.get("is_active")]
+
+        for a in assets:
+            self.asset_combo.addItem(a["name"], a["id"])
+
+        for a in liabilities:
+            self.liability_combo.addItem(a["name"], a["id"])
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(14, 14, 14, 14)
+        outer.setSpacing(12)
+
+        form = QFormLayout()
+        form.addRow("Asset account", self.asset_combo)
+        form.addRow("Liability account", self.liability_combo)
+        outer.addLayout(form)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+
+        self.cancel_btn = QPushButton("Cancel")
+        self.link_btn = QPushButton("Link")
+        self.link_btn.setMinimumHeight(34)
+
+        self.cancel_btn.clicked.connect(self.reject)
+        self.link_btn.clicked.connect(self.accept)
+
+        btns.addWidget(self.cancel_btn)
+        btns.addWidget(self.link_btn)
+        outer.addLayout(btns)
+
+    @property
+    def selection(self) -> tuple[int | None, int | None]:
+        asset_id = self.asset_combo.currentData()
+        liability_id = self.liability_combo.currentData()
+        return asset_id, liability_id
 
 class AccountsManagerPage(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -117,6 +167,10 @@ class AccountsManagerPage(QFrame):
         self.add_btn.setMinimumHeight(32)
         self.add_btn.clicked.connect(self.add_account)
 
+        self.link_btn = QPushButton("Link accounts")
+        self.link_btn.setMinimumHeight(32)
+        self.link_btn.clicked.connect(self.open_link_accounts_dialog)
+
         self.toggle_btn = QPushButton("Toggle active")
         self.toggle_btn.setMinimumHeight(32)
         self.toggle_btn.clicked.connect(self.toggle_active_selected)
@@ -126,6 +180,7 @@ class AccountsManagerPage(QFrame):
         self.refresh_btn.clicked.connect(self.refresh)
 
         header.addWidget(self.add_btn)
+        header.addWidget(self.link_btn)
         header.addWidget(self.toggle_btn)
         header.addWidget(self.refresh_btn)
         outer.addLayout(header)
@@ -140,6 +195,34 @@ class AccountsManagerPage(QFrame):
         outer.addWidget(self.table, 1)
 
         self.refresh()
+
+    def open_link_accounts_dialog(self) -> None:
+        accounts = self._load_accounts()
+
+        rows = [
+            {
+                "id": acc.id,
+                "name": acc.name,
+                "type": acc.type,
+                "is_active": acc.is_active,
+            }
+            for acc in accounts
+        ]
+
+        dlg = LinkAccountsDialog(rows, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            asset_id, liability_id = dlg.selection
+            if asset_id is None or liability_id is None:
+                QMessageBox.warning(self, "Validation error", "Please select both an asset and a liability.")
+                return
+
+            try:
+                add_account_link(int(asset_id), int(liability_id))
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to create link:\n{e}")
+                return
+
+            QMessageBox.information(self, "Linked", "Accounts linked successfully.")
 
     def refresh(self) -> None:
         accounts = self._load_accounts()
