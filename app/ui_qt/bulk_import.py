@@ -226,6 +226,11 @@ class BulkImportPage(QFrame):
         self.pick_pdf_btn.setMinimumHeight(32)
         self.pick_pdf_btn.clicked.connect(self.choose_pdf)
 
+        self.delete_row_btn = QPushButton("Delete selected row")
+        self.delete_row_btn.setMinimumHeight(32)
+        self.delete_row_btn.setEnabled(False)
+        self.delete_row_btn.clicked.connect(self.delete_selected_row)
+
         self.commit_btn = QPushButton("Commit to DB")
         self.commit_btn.setMinimumHeight(32)
         self.commit_btn.setEnabled(False)
@@ -233,6 +238,7 @@ class BulkImportPage(QFrame):
 
         header.addWidget(self.pick_btn)
         header.addWidget(self.pick_pdf_btn)
+        header.addWidget(self.delete_row_btn)
         header.addWidget(self.commit_btn)
         outer.addLayout(header)
 
@@ -255,6 +261,8 @@ class BulkImportPage(QFrame):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         outer.addWidget(self.table, 1)
+
+        self.table.itemSelectionChanged.connect(self._sync_delete_row_btn)
 
     def _load_balancing_accounts(self) -> list[tuple[int, str]]:
         """Return [(id, name), ...] for active balancing accounts."""
@@ -436,6 +444,30 @@ class BulkImportPage(QFrame):
         self.rows = rows
         self.commit_btn.setEnabled(len(self.rows) > 0)
 
+    def _sync_delete_row_btn(self) -> None:
+        # Enable only when a row is selected and there is at least 1 row in the table
+        self.delete_row_btn.setEnabled(self.table.currentRow() >= 0 and self.table.rowCount() > 0)
+
+    def delete_selected_row(self) -> None:
+        r = self.table.currentRow()
+        if r < 0:
+            return
+
+        # Remove the row from the UI table
+        self.table.removeRow(r)
+
+        # Keep our combo tracking list in sync
+        if 0 <= r < len(self._balancing_combos):
+            self._balancing_combos.pop(r)
+
+        # Also remove from the underlying rows list (keeps commit_btn logic honest)
+        if 0 <= r < len(self.rows):
+            self.rows.pop(r)
+
+        # Update buttons
+        self.commit_btn.setEnabled(len(self.rows) > 0 and self.table.rowCount() > 0)
+        self._sync_delete_row_btn()
+
     def _load_preview(self, rows: list[dict]) -> None:
         self.table.setRowCount(min(len(rows), 500))  # cap preview
         self._balancing_combos = []
@@ -456,6 +488,7 @@ class BulkImportPage(QFrame):
 
         self.table.resizeColumnsToContents()
         self.table.setColumnWidth(4, 220)
+        self._sync_delete_row_btn()
 
     def _set_item(self, row: int, col: int, text: str, align: Qt.AlignmentFlag | None = None) -> None:
         item = QTableWidgetItem(text)
