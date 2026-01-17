@@ -360,6 +360,7 @@ class TransactionHistoryPage(QFrame):
             return
 
         self.refresh()
+        self.table.clearSelection()
 
         msg = f"Deleted: {deleted_count}"
         if not_found_count:
